@@ -15,25 +15,26 @@ on:
 
 jobs:
   build:
+    # 必须给写入权限，否则 tauri-action 无法上传构建产物到 Draft Release
+    permissions:
+      contents: write 
+      
     strategy:
       fail-fast: false
       matrix:
-        platform:
-          - os: macos-latest
-            target: aarch64-apple-darwin,x86_64-apple-darwin
-          - os: ubuntu-22.04
-            target: ''
-          - os: windows-latest
-            target: ''
+        include:
+          - platform: windows-latest
+            args: ''
 
-    runs-on: ${{ matrix.platform.os }}
+    runs-on: ${{ matrix.platform }}
     
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # 修复点：if 判断必须加 ${{ }}，否则 Ubuntu 不会安装依赖
       - name: Install dependencies (Ubuntu only)
-        if: matrix.platform.os == 'ubuntu-22.04'
+        if: ${{ matrix.platform == 'ubuntu-22.04' }}
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libgtk-3-dev libayatana-appindicator3-dev
@@ -46,7 +47,8 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.platform.target }}
+          # 动态给 macOS 安装双架构 target
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2
@@ -66,12 +68,17 @@ jobs:
           releaseBody: 'See the assets to download this version and install.'
           releaseDraft: true
           prerelease: false
+          # 使用拆分后的 args
+          args: ${{ matrix.args }}
 
   release:
     needs: build
     runs-on: ubuntu-latest
+    # 只有打 tag（如 v1.0.0）时才执行发布
     if: startsWith(github.ref, 'refs/tags/')
     
+    permissions:
+      contents: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -79,7 +86,9 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
+          # 把 tauri-action 生成的草稿 Release 正式发布出去
           draft: false
+          # 自动根据 tag 之间的 commit 生成更新日志
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
